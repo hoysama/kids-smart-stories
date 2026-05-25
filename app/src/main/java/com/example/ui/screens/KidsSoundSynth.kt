@@ -105,8 +105,8 @@ object KidsSoundSynth {
             audioTrack.playShortWindow()
             delay((numSamples * 1000L) / sampleRate)
             audioTrack.safeClean()
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (t: Throwable) {
+            t.printStackTrace()
         }
     }
 
