@@ -58,8 +58,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,6 +87,16 @@ import com.example.ui.theme.*
 import com.example.ui.viewmodel.KidsStoriesViewModel
 import com.example.ui.viewmodel.GenerationState
 import kotlinx.coroutines.delay
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.animation.animateContentSize
 
 // Beautiful options for kid customization
 data class StoryPresetOption(val labelAr: String, val labelEn: String, val emoji: String)
@@ -176,6 +188,9 @@ fun StoriesDashboard(
             // Header Hero Banner
             HeaderHeroSection(isRtl)
 
+            // Kids achievements milestones & daily reading streak (Feature 7)
+            KidsMilestonesSection(storiesCount = allStories.size, isRtl = isRtl)
+
             // Saved Library Row (Only show if we have stories)
             if (allStories.isNotEmpty()) {
                 SavedStoriesSection(
@@ -221,6 +236,16 @@ fun StoriesDashboard(
         // Standard Loader Dialog during generation state
         if (generationState is GenerationState.Loading) {
             StoryGenerationLoader(selectedLang)
+        }
+
+        // Beautiful kid-friendly error dialog
+        if (generationState is GenerationState.Error) {
+            val errorMsg = (generationState as GenerationState.Error).message
+            StoryGenerationErrorDialog(
+                selectedLang = selectedLang,
+                errorMessage = errorMsg,
+                onDismiss = { viewModel.resetGenerationState() }
+            )
         }
 
         // Fullscreen Story Reader Overlay
@@ -288,6 +313,8 @@ fun SavedStoriesSection(
     onStoryClick: (StoryEntity) -> Unit,
     onStoryDelete: (Int) -> Unit
 ) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("kids_stories_prefs", Context.MODE_PRIVATE) }
     val titleText = if (isRtl) "📚 مكتبة قصصي الذكية" else "📚 My Smart Library"
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -307,6 +334,9 @@ fun SavedStoriesSection(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(stories, key = { it.id }) { story ->
+                val rating = remember(story.id) { prefs.getInt("rating_${story.id}", 0) }
+                val reaction = remember(story.id) { prefs.getString("reaction_${story.id}", "") ?: "" }
+
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surface
@@ -314,7 +344,7 @@ fun SavedStoriesSection(
                     shape = RoundedCornerShape(20.dp),
                     modifier = Modifier
                         .width(220.dp)
-                        .height(140.dp)
+                        .height(145.dp)
                         .shadow(4.dp, shape = RoundedCornerShape(20.dp))
                         .clickable { onStoryClick(story) }
                         .testTag("story_card_${story.id}")
@@ -323,19 +353,34 @@ fun SavedStoriesSection(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(16.dp),
+                                .padding(14.dp),
                             verticalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(
-                                text = story.title,
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp
-                                ),
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
+                            Column {
+                                Text(
+                                    text = story.title,
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    ),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+
+                                if (rating > 0) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        repeat(rating) {
+                                            Text("⭐", fontSize = 11.sp)
+                                        }
+                                        if (reaction.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(reaction, fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                            }
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -346,7 +391,7 @@ fun SavedStoriesSection(
                                 Text(
                                     text = "${story.heroName} ${if (story.language == "ar") "🦸" else "🦸‍♂️"}",
                                     style = MaterialTheme.typography.bodySmall.copy(
-                                        fontSize = 12.sp,
+                                        fontSize = 11.sp,
                                         fontWeight = FontWeight.Medium
                                     ),
                                     color = MaterialTheme.colorScheme.primary
@@ -711,23 +756,184 @@ fun StoryGenerationLoader(selectedLang: String) {
 }
 
 @Composable
+fun StoryGenerationErrorDialog(
+    selectedLang: String,
+    errorMessage: String,
+    onDismiss: () -> Unit
+) {
+    val isAr = selectedLang == "ar"
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            tonalElevation = 8.dp,
+            color = SoftCream,
+            modifier = Modifier
+                .width(320.dp)
+                .padding(12.dp)
+                .border(2.5.dp, WarmCoral, RoundedCornerShape(28.dp))
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Friendly error emoji badge
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(60.dp)
+                        .background(WarmCoral.copy(alpha = 0.15f), CircleShape)
+                        .border(1.5.dp, WarmCoral, CircleShape)
+                ) {
+                    Text(text = "🧚‍♀️🩹", fontSize = 28.sp)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = if (isAr) "عذراً يا بطل! حدث خطأ بسيط" else "Oh No! Something Went Wrong",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = DarkCocoa,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Detailed clear parent feedback
+                Text(
+                    text = if (isAr) {
+                        "يبدو أن سحر الذكاء الاصطناعي واجه مشكلة أثناء صياغة القصة أو أن مفتاح الخدمة غير صحيح. يرجى التحقق مما يلي:\n\n" +
+                        "1. الاتصال بشبكة الإنترنت 📶\n" +
+                        "2. ضبط الـ API Key في لوحة Secrets 🔑\n\n" +
+                        "التفاصيل: $errorMessage"
+                    } else {
+                        "It looks like our story magic ran into a glitch while writing. Please make sure that:\n\n" +
+                        "1. You are connected to the internet 📶\n" +
+                        "2. The Gemini API Key is set correctly in the Secrets panel 🔑\n\n" +
+                        "Details: $errorMessage"
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp
+                    ),
+                    color = Color.Gray,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = WarmCoral),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (isAr) "موافق، سأحاول مجدداً 🌟" else "Okay, I will Try Again 🌟",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = Color.White
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun StoryReaderView(
     story: StoryEntity,
     viewModel: KidsStoriesViewModel,
     onBack: () -> Unit
 ) {
     val isAr = story.language == "ar"
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("kids_stories_prefs", Context.MODE_PRIVATE) }
+    val coroutineScope = rememberCoroutineScope()
 
     val quizQuestions = remember(story) { viewModel.getQuizQuestionsForSelectedStory() }
     val quizAnswers by viewModel.quizAnswers.collectAsState()
     val quizCompleted by viewModel.quizCompleted.collectAsState()
+
+    // FEATURE 5: Kids-friendly configurable reading font size state
+    var selectedFontSizeLevel by remember { mutableIntStateOf(prefs.getInt("kids_font_size", 1)) } // 0 = Junior, 1 = Explorer, 2 = Hero
+    val textSp = when (selectedFontSizeLevel) {
+        0 -> 16.sp
+        1 -> 20.sp
+        else -> 25.sp
+    }
+    val lineSp = when (selectedFontSizeLevel) {
+        0 -> 25.sp
+        1 -> 31.sp
+        else -> 38.sp
+    }
+
+    // FEATURE 1: Beautiful paginated book chunks strategy
+    val pages = remember(story.storyContent) {
+        val raw = story.storyContent.split("\n\n")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        if (raw.size <= 1) {
+            val sentences = story.storyContent.split(". ")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            if (sentences.size > 2) {
+                sentences.chunked(3).map { it.joinToString(". ") + "." }
+            } else {
+                listOf(story.storyContent)
+            }
+        } else {
+            raw
+        }
+    }
+    var currentPageIndex by remember { mutableIntStateOf(0) }
+
+    // FEATURE 3: Drawing & coloring canvas states
+    var showDrawingCanvas by remember { mutableStateOf(false) }
+    val drawnLines = remember { mutableStateListOf<DrawnLine>() }
+    var currentDrawColor by remember { mutableStateOf(WarmCoral) }
+    var currentStrokeWidth by remember { mutableStateOf(8f) }
+
+    // FEATURE 6: Kids educational glossary bank
+    val smartWords = remember(story) {
+        if (isAr) {
+            listOf(
+                Triple("شجاعة 🦁", "Courage", "القدرة على مواجهة الأمور الصعبة برأس مرفوع وقلب قوي! 💪"),
+                Triple("مغامرة 🚀", "Adventure", "استكشاف دروب وحكايات ممتعة لنتعلم أشياء جديدة! 🗺️"),
+                Triple("تعاون 🤝", "Cooperation", "مساعدة أصدقائنا وأسرتنا لننجز أعمالاً عظيمة معاً! 🎈")
+            )
+        } else {
+            listOf(
+                Triple("Courage 🦁", "شجاعة", "Being brave enough to try our best even when things feel tough! 💪"),
+                Triple("Adventure 🚀", "مغامرة", "Exploring wonderful experiences and seeking new knowledge! 🗺️"),
+                Triple("Cooperation 🤝", "تعاون", "Working happily together with family and friends! 🎈")
+            )
+        }
+    }
+
+    // FEATURE 9: Rating states
+    var ratedStars by remember { mutableIntStateOf(prefs.getInt("rating_${story.id}", 0)) }
+    var selectedReaction by remember { mutableStateOf(prefs.getString("reaction_${story.id}", "") ?: "") }
+    var showCelebrationFeedback by remember { mutableStateOf(false) }
+
+    // Animation progress icon
+    val emojiProgressIcon = when (story.setting) {
+        "الغابة السحرية", "Enchanted Forest" -> "🐝"
+        "الفضاء الواسع", "Deep Space" -> "🚀"
+        "أعماق البحر", "Undersea World" -> "🐙"
+        "مزرعة الجد", "Grandpa's Farm" -> "🏡"
+        else -> "🌟"
+    }
 
     Surface(
         color = SoftCream,
         modifier = Modifier.fillMaxSize()
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Elegant top menu bar
+            // Top Bar Row with standard close and options
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -736,9 +942,7 @@ fun StoryReaderView(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 IconButton(
-                    onClick = {
-                        onBack()
-                    },
+                    onClick = { onBack() },
                     modifier = Modifier
                         .size(44.dp)
                         .background(Color.White, CircleShape)
@@ -760,19 +964,36 @@ fun StoryReaderView(
                     )
                 )
 
-                // Empty balancing box to keep the title perfectly centered
-                Box(
-                    modifier = Modifier.size(44.dp)
-                )
+                // Quick font size toggle chip
+                IconButton(
+                    onClick = {
+                        val next = (selectedFontSizeLevel + 1) % 3
+                        selectedFontSizeLevel = next
+                        prefs.edit().putInt("kids_font_size", next).apply()
+                    },
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(Color.White, CircleShape)
+                        .shadow(1.dp, CircleShape)
+                ) {
+                    Text(
+                        text = when (selectedFontSizeLevel) {
+                            0 -> "👶"
+                            1 -> "🧒"
+                            else -> "🦁"
+                        },
+                        fontSize = 18.sp
+                    )
+                }
             }
 
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
             ) {
-                // Title Area
+                // Kid-friendly Header Story banner
                 item {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -781,75 +1002,427 @@ fun StoryReaderView(
                         shape = RoundedCornerShape(24.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 12.dp)
+                            .padding(vertical = 8.dp)
                             .border(2.dp, SunnyGold, RoundedCornerShape(24.dp))
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(20.dp),
+                                .padding(16.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
                                 text = "✨ " + story.title + " ✨",
                                 style = MaterialTheme.typography.headlineSmall.copy(
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 22.sp,
-                                    lineHeight = 30.sp,
+                                    fontSize = 21.sp,
+                                    lineHeight = 28.sp,
                                     color = DarkCocoa
                                 ),
                                 textAlign = TextAlign.Center
                             )
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            Row(
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "🧙‍♂️ ${story.heroType}  |  🌍 ${story.setting}",
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    ),
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "🧙‍♂️ ${story.heroType}  |  🌍 ${story.setting}",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
                                 )
+                            )
+                        }
+                    }
+                }
+
+                // FEATURE 2: Magical Soundscapes & Synth Board Card
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                            .shadow(1.dp, RoundedCornerShape(20.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                text = if (isAr) "🎹 لوحة المؤثرات الصوتية السحرية" else "🎹 Magical Sound Board",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = DarkCocoa,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                val sfxOptions = listOf(
+                                    Pair("🪄", "magic"),
+                                    Pair("🤖", "robot"),
+                                    Pair("🛸", "laser"),
+                                    Pair("🦁", "roar"),
+                                    Pair("🎉", "victory")
+                                )
+                                sfxOptions.forEach { (emoji, sfxId) ->
+                                    IconButton(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                KidsSoundSynth.playTone(sfxId)
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .background(
+                                                color = when(sfxId) {
+                                                    "magic" -> Color(0xFFE1BEE7)
+                                                    "robot" -> Color(0xFFCFD8DC)
+                                                    "laser" -> Color(0xFFB3E5FC)
+                                                    "roar" -> Color(0xFFFFCC80)
+                                                    else -> Color(0xFFC8E6C9)
+                                                },
+                                                shape = CircleShape
+                                            )
+                                    ) {
+                                        Text(text = emoji, fontSize = 20.sp)
+                                    }
+                                }
                             }
                         }
                     }
                 }
 
-                // Story Content Display
+                // FEATURE 1: Beautiful Paginated Book screen
                 item {
                     Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(28.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(26.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 8.dp)
-                            .shadow(2.dp, shape = RoundedCornerShape(28.dp))
+                            .shadow(2.dp, shape = RoundedCornerShape(26.dp))
                     ) {
-                        Column(modifier = Modifier.padding(24.dp)) {
+                        Column(modifier = Modifier.padding(22.dp).animateContentSize()) {
+                            // Current page content
+                            val currentPageText = pages.getOrElse(currentPageIndex) { "" }
                             Text(
-                                text = story.storyContent,
+                                text = currentPageText,
                                 style = MaterialTheme.typography.bodyLarge.merge(
                                     TextStyle(
-                                        fontSize = 18.sp,
-                                        lineHeight = 28.sp,
-                                        letterSpacing = 0.5.sp,
+                                        fontSize = textSp,
+                                        lineHeight = lineSp,
+                                        fontWeight = FontWeight.Medium,
                                         color = DarkCocoa,
                                         textDirection = if (isAr) TextDirection.Rtl else TextDirection.Ltr
                                     )
                                 )
                             )
+
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            // Custom mathematically styled responsive slider with insect/rocket path indicators
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(20.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .background(Color.LightGray.copy(alpha = 0.35f), CircleShape)
+                                )
+
+                                val fraction = if (pages.size > 1) {
+                                    currentPageIndex.toFloat() / (pages.size - 1)
+                                } else {
+                                    1f
+                                }
+
+                                if (fraction > 0f) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(fraction)
+                                            .height(6.dp)
+                                            .background(SunnyGold, CircleShape)
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = if (fraction == 1f) Arrangement.End else Arrangement.Start
+                                ) {
+                                    if (fraction > 0f && fraction < 1f) {
+                                        Spacer(modifier = Modifier.fillMaxWidth(fraction - 0.05f).weight(1f, fill = false))
+                                    }
+                                    Text(
+                                        text = emojiProgressIcon,
+                                        fontSize = 18.sp,
+                                        modifier = Modifier.offset(y = (-4).dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Back / Next buttons
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (currentPageIndex > 0) {
+                                            currentPageIndex--
+                                            coroutineScope.launch { KidsSoundSynth.playTone("laser") }
+                                        }
+                                    },
+                                    enabled = currentPageIndex > 0,
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(text = if (isAr) "⬅️ السابق" else "⬅️ Previous", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+
+                                Text(
+                                    text = if (isAr) "صفحة ${currentPageIndex + 1} / ${pages.size}" else "P. ${currentPageIndex + 1} / ${pages.size}",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = DarkCocoa)
+                                )
+
+                                Button(
+                                    onClick = {
+                                        if (currentPageIndex < pages.size - 1) {
+                                            currentPageIndex++
+                                            coroutineScope.launch { KidsSoundSynth.playTone("magic") }
+                                        }
+                                    },
+                                    enabled = currentPageIndex < pages.size - 1,
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(text = if (isAr) "التالي ➡️" else "Next ➡️", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+                            }
                         }
                     }
                 }
 
-                // Dynamic Moral Lesson Box (العبرة الأخلاقية والتعليمية)
+                // FEATURE 3: Collapsible Drawing Canvas Section
+                item {
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Color(0xFFEDE7F6))
+                                .clickable { showDrawingCanvas = !showDrawingCanvas }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(text = "🎨", fontSize = 22.sp, modifier = Modifier.padding(end = 8.dp))
+                                Text(
+                                    text = if (isAr) "دَفتَرُ الرّسمِ وتلوينِ البطلِ الصّغير" else "Coloring & Sketching Canvas",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color(0xFF4527A0)
+                                )
+                            }
+                            Text(text = if (showDrawingCanvas) "🔼" else "🔽", fontSize = 12.sp)
+                        }
+
+                        if (showDrawingCanvas) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(2.dp, Color(0xFF9575CD), RoundedCornerShape(24.dp))
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    // Palette Color Circles
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceEvenly,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val palette = listOf(
+                                            WarmCoral, SunnyGold, SkyBlue, MagicMint, Color(0xFFBA68C8), DarkCocoa
+                                        )
+                                        palette.forEach { col ->
+                                            val isSelected = currentDrawColor == col
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(if (isSelected) 36.dp else 28.dp)
+                                                    .background(col, CircleShape)
+                                                    .border(
+                                                        width = if (isSelected) 3.dp else 1.dp,
+                                                        color = if (isSelected) Color.Black else Color.Gray.copy(alpha = 0.5f),
+                                                        shape = CircleShape
+                                                    )
+                                                    .clickable { currentDrawColor = col }
+                                            )
+                                        }
+                                    }
+
+                                    // Canvas Drawing Panel with transparent Emoji base to trace color!
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(260.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(Color(0xFFFBFBFC))
+                                            .border(1.5.dp, Color.LightGray.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+                                    ) {
+                                        // Trace guide in background
+                                        Text(
+                                            text = when(story.heroType) {
+                                                "بطل شجاع", "Brave Explorer" -> "🦁"
+                                                "روبوت ذكي", "Clever Robot" -> "🤖"
+                                                "قطة فضولية", "Curious Kitten" -> "🐱"
+                                                "جنيّة طيبة", "Kind Fairy" -> "✨"
+                                                else -> "🐰"
+                                            },
+                                            fontSize = 90.sp,
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .alpha(0.12f)
+                                        )
+
+                                        androidx.compose.foundation.Canvas(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .pointerInput(Unit) {
+                                                    detectDragGestures(
+                                                        onDragStart = { offset ->
+                                                            drawnLines.add(DrawnLine(listOf(offset), currentDrawColor, currentStrokeWidth))
+                                                            prefs.edit().putBoolean("drew_something", true).apply()
+                                                        },
+                                                        onDrag = { change, _ ->
+                                                            change.consume()
+                                                            if (drawnLines.isNotEmpty()) {
+                                                                val currentLine = drawnLines.last()
+                                                                drawnLines[drawnLines.size - 1] = currentLine.copy(points = currentLine.points + change.position)
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                        ) {
+                                            drawnLines.forEach { line ->
+                                                val path = Path()
+                                                line.points.forEachIndexed { idx, pt ->
+                                                    if (idx == 0) path.moveTo(pt.x, pt.y) else path.lineTo(pt.x, pt.y)
+                                                }
+                                                drawPath(
+                                                    path = path,
+                                                    color = line.color,
+                                                    style = Stroke(width = line.strokeWidth)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    // Controls: Undo + Clear
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                if (drawnLines.isNotEmpty()) {
+                                                    drawnLines.removeLast()
+                                                }
+                                            },
+                                            enabled = drawnLines.isNotEmpty(),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color.LightGray),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Text(text = "↩️ تراجع", color = DarkCocoa, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+
+                                        // Brush Width Slider
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(text = "✏️", fontSize = 14.sp)
+                                            androidx.compose.material3.Slider(
+                                                value = currentStrokeWidth,
+                                                onValueChange = { currentStrokeWidth = it },
+                                                valueRange = 4f..20f,
+                                                modifier = Modifier.width(100.dp)
+                                            )
+                                        }
+
+                                        Button(
+                                            onClick = { drawnLines.clear() },
+                                            enabled = drawnLines.isNotEmpty(),
+                                            colors = ButtonDefaults.buttonColors(containerColor = WarmCoral),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Text(text = "🗑️ مسح الكل", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // FEATURE 6: Educational Vocabulary Bank
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFFE8F5E9)
+                        ),
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 10.dp)
+                            .border(2.dp, Color(0xFF81C784), RoundedCornerShape(24.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(text = "💡", fontSize = 24.sp, modifier = Modifier.padding(end = 8.dp))
+                                Text(
+                                    text = if (isAr) "بنك الكلمات الذكية للأذكياء" else "Smart Vocabulary Bank",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color(0xFF2E7D32)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            smartWords.forEach { (word, eng, description) ->
+                                var expandedWord by remember { mutableStateOf(false) }
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .background(Color.White.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                                        .clickable { expandedWord = !expandedWord }
+                                        .padding(12.dp)
+                                        .animateContentSize()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(text = word, fontWeight = FontWeight.Bold, color = DarkCocoa, fontSize = 14.sp)
+                                        Text(text = eng, fontWeight = FontWeight.SemiBold, color = Color.Gray, fontSize = 12.sp)
+                                    }
+                                    if (expandedWord) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(text = description, fontSize = 13.sp, color = DarkCocoa, lineHeight = 18.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Dynamic Moral Lesson Box
                 item {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -858,7 +1431,7 @@ fun StoryReaderView(
                         shape = RoundedCornerShape(24.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 14.dp)
+                            .padding(vertical = 10.dp)
                             .border(2.dp, MaterialTheme.colorScheme.secondary, RoundedCornerShape(24.dp))
                     ) {
                         Column(modifier = Modifier.padding(20.dp)) {
@@ -887,7 +1460,7 @@ fun StoryReaderView(
                     }
                 }
 
-                // Comprehension Quiz Section (تحدي الفهم الذكي)
+                // Comprehension Quiz Section
                 if (quizQuestions.isNotEmpty()) {
                     item {
                         Card(
@@ -918,7 +1491,6 @@ fun StoryReaderView(
                                         )
                                     }
 
-                                    // Reset Quiz Button
                                     if (quizCompleted) {
                                         IconButton(
                                             onClick = { viewModel.resetQuiz() },
@@ -1024,7 +1596,19 @@ fun StoryReaderView(
                                 if (!quizCompleted) {
                                     val allAnswered = quizAnswers.size == quizQuestions.size
                                     Button(
-                                        onClick = { viewModel.submitQuiz() },
+                                        onClick = {
+                                            viewModel.submitQuiz()
+                                            // Handle quiz completion badge milestones
+                                            val correctCount = quizQuestions.filterIndexed { index, q ->
+                                                quizAnswers[index] == q.correctOptionIndex
+                                            }.size
+                                            if (correctCount == quizQuestions.size) {
+                                                prefs.edit().putInt("quiz_genius_count", prefs.getInt("quiz_genius_count", 0) + 1).apply()
+                                                coroutineScope.launch { KidsSoundSynth.playTone("victory") }
+                                            } else {
+                                                coroutineScope.launch { KidsSoundSynth.playTone("victory") }
+                                            }
+                                        },
                                         enabled = allAnswered,
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = MaterialTheme.colorScheme.primary
@@ -1040,7 +1624,6 @@ fun StoryReaderView(
                                         )
                                     }
                                 } else {
-                                    // Compliment based on score
                                     val correctCount = quizQuestions.filterIndexed { index, q ->
                                         quizAnswers[index] == q.correctOptionIndex
                                     }.size
@@ -1089,7 +1672,260 @@ fun StoryReaderView(
                         }
                     }
                 }
+
+                // FEATURE 9: Star Rating and Custom Interaction feedback emojis reviews Board
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(26.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp)
+                            .shadow(2.dp, shape = RoundedCornerShape(26.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(22.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = if (isAr) "⭐ قيم القصة وعبر عن شعورك!" else "⭐ Rate this Story & Share Feelings!",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = DarkCocoa),
+                                textAlign = TextAlign.Center
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Golden Rating Stars interactive row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                (1..5).forEach { starIdx ->
+                                    val isGlow = ratedStars >= starIdx
+                                    Text(
+                                        text = "⭐",
+                                        fontSize = 32.sp,
+                                        modifier = Modifier
+                                            .padding(horizontal = 4.dp)
+                                            .clickable {
+                                                ratedStars = starIdx
+                                                prefs.edit().putInt("rating_${story.id}", starIdx).apply()
+                                                showCelebrationFeedback = true
+                                                coroutineScope.launch {
+                                                    KidsSoundSynth.playTone("victory")
+                                                }
+                                            }
+                                            .scale(if (isGlow) 1.2f else 1f)
+                                            .alpha(if (isGlow) 1f else 0.3f)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Fun stickers reaction bar
+                            Text(
+                                text = if (isAr) "اختر ملصقاً تعبيرياً:" else "Choose a story reaction:",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = Color.Gray),
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                val stickers = listOf("😍", "😂", "😮", "🧙‍♂️", "🧸", "🦕")
+                                stickers.forEach { sticker ->
+                                    val isPicked = selectedReaction == sticker
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .background(
+                                                color = if (isPicked) SunnyGold.copy(alpha = 0.25f) else Color.Transparent,
+                                                shape = CircleShape
+                                            )
+                                            .border(
+                                                width = if (isPicked) 2.dp else 0.dp,
+                                                color = if (isPicked) SunnyGold else Color.Transparent,
+                                                shape = CircleShape
+                                            )
+                                            .clickable {
+                                                selectedReaction = sticker
+                                                prefs.edit().putString("reaction_${story.id}", sticker).apply()
+                                                showCelebrationFeedback = true
+                                                coroutineScope.launch { KidsSoundSynth.playTone("magic") }
+                                            }
+                                    ) {
+                                        Text(text = sticker, fontSize = 24.sp)
+                                    }
+                                }
+                            }
+
+                            if (showCelebrationFeedback) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = if (isAr) "شكرًا لك يا بطل على التقييم! 🎉🥳" else "Thank you for the rating, little hero! 🎉🥳",
+                                    color = Color(0xFF2E7D32),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
+
+data class DrawnLine(
+    val points: List<Offset>,
+    val color: Color,
+    val strokeWidth: Float
+)
+
+@Composable
+fun KidsMilestonesSection(storiesCount: Int, isRtl: Boolean) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("kids_stories_prefs", Context.MODE_PRIVATE) }
+    
+    // Compute day reading streaks
+    val streakDays = remember(storiesCount) {
+        val count = prefs.getInt("reading_streak", 1)
+        if (storiesCount > 0) count else 0
+    }
+
+    val drewSomething = remember { prefs.getBoolean("drew_something", false) }
+    val quizGeniusCount = remember { prefs.getInt("quiz_genius_count", 0) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SunnyGold.copy(alpha = 0.08f)),
+        shape = RoundedCornerShape(24.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .border(1.5.dp, SunnyGold.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Title + streak counter
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isRtl) "🏆 أوسمة وإنجازات البطل الصغير" else "🏆 Little Hero Milestones",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = DarkCocoa
+                )
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(Color.White, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text("🔥", fontSize = 14.sp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "$streakDays " + (if (isRtl) "أيام" else "Days"),
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = DarkCocoa
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Display badges horizontally row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Badge 1: First story explorer
+                BadgeIcon(
+                    emoji = "📚",
+                    label = if (isRtl) "أول كتاب" else "First Story",
+                    unlocked = storiesCount >= 1
+                )
+
+                // Badge 2: Creative artist drawer
+                BadgeIcon(
+                    emoji = "🎨",
+                    label = if (isRtl) "رسام مبدع" else "Creative Kid",
+                    unlocked = drewSomething
+                )
+
+                // Badge 3: Smart quiz champion scorer
+                BadgeIcon(
+                    emoji = "👑",
+                    label = if (isRtl) "ملك الذكاء" else "Quiz Genius",
+                    unlocked = quizGeniusCount >= 1
+                )
+
+                // Badge 4: Story Library master
+                BadgeIcon(
+                    emoji = "🧚",
+                    label = if (isRtl) "القارئ الفائق" else "Super Reader",
+                    unlocked = storiesCount >= 3
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun BadgeIcon(emoji: String, label: String, unlocked: Boolean) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(4.dp)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(54.dp)
+                .background(
+                    color = if (unlocked) SunnyGold.copy(alpha = 0.2f) else Color.LightGray.copy(alpha = 0.2f),
+                    shape = CircleShape
+                )
+                .border(
+                    width = if (unlocked) 2.dp else 1.dp,
+                    color = if (unlocked) SunnyGold else Color.LightGray.copy(alpha = 0.5f),
+                    shape = CircleShape
+                )
+        ) {
+            Text(
+                text = emoji,
+                fontSize = 26.sp,
+                modifier = Modifier.alpha(if (unlocked) 1f else 0.4f)
+            )
+            if (unlocked) {
+                Text(
+                    text = "✓",
+                    fontSize = 10.sp,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(16.dp)
+                        .background(MagicMint, CircleShape)
+                        .wrapContentSize(Alignment.Center)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontSize = 11.sp,
+                fontWeight = if (unlocked) FontWeight.Bold else FontWeight.Normal
+            ),
+            color = if (unlocked) DarkCocoa else Color.Gray,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
