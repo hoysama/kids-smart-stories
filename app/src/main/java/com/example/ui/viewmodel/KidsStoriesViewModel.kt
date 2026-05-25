@@ -58,16 +58,9 @@ class KidsStoriesViewModel(application: Application) : AndroidViewModel(applicat
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
     init {
-        try {
-            tts = TextToSpeech(application) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    _isSpeaking.value = false
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            tts = null
-        }
+        // Do not initialize TextToSpeech immediately at startup.
+        // Lazy initialization when user requests voice over speaks protects the application
+        // from immediate startup crashes when TTS is broken or not supported in emulator/system environments.
     }
 
     fun selectStory(story: StoryEntity?) {
@@ -128,7 +121,7 @@ class KidsStoriesViewModel(application: Application) : AndroidViewModel(applicat
                 )
                 _generationState.value = GenerationState.Success(newStory)
                 selectStory(newStory)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 e.printStackTrace()
                 _generationState.value = GenerationState.Error(e.message ?: "Unknown error while crafting story")
             }
@@ -141,14 +134,44 @@ class KidsStoriesViewModel(application: Application) : AndroidViewModel(applicat
 
     // TTS Functions
     fun speakText(text: String, languageCode: String) {
-        tts?.let { ttsInstance ->
-            if (ttsInstance.isSpeaking) {
-                ttsInstance.stop()
-                _isSpeaking.value = false
-                return
+        try {
+            val currentTts = tts
+            if (currentTts != null) {
+                val alreadySpeaking = try { currentTts.isSpeaking } catch (t: Throwable) { false }
+                if (alreadySpeaking) {
+                    try { currentTts.stop() } catch (t: Throwable) {}
+                    _isSpeaking.value = false
+                    return
+                }
+                performSpeak(text, languageCode)
+            } else {
+                // Initialize TTS lazily
+                _isSpeaking.value = true
+                tts = TextToSpeech(getApplication()) { status ->
+                    if (status == TextToSpeech.SUCCESS) {
+                        performSpeak(text, languageCode)
+                    } else {
+                        _isSpeaking.value = false
+                        tts = null
+                    }
+                }
             }
+        } catch (t: Throwable) {
+            t.printStackTrace()
+            _isSpeaking.value = false
+            tts = null
+        }
+    }
+
+    private fun performSpeak(text: String, languageCode: String) {
+        val ttsInstance = tts ?: return
+        try {
             val locale = if (languageCode == "ar") Locale("ar") else Locale.US
-            ttsInstance.language = locale
+            try {
+                ttsInstance.language = locale
+            } catch (t: Throwable) {
+                t.printStackTrace()
+            }
             
             _isSpeaking.value = true
             ttsInstance.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -166,12 +189,22 @@ class KidsStoriesViewModel(application: Application) : AndroidViewModel(applicat
             }
             // Clean text from bold markers or formatting before reading out loud
             val cleanText = text.replace("**", "").replace("_", "")
-            ttsInstance.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, "StorySpeechId")
+            val result = ttsInstance.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, "StorySpeechId")
+            if (result == TextToSpeech.ERROR) {
+                _isSpeaking.value = false
+            }
+        } catch (t: Throwable) {
+            t.printStackTrace()
+            _isSpeaking.value = false
         }
     }
 
     fun stopSpeaking() {
-        tts?.stop()
+        try {
+            tts?.stop()
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
         _isSpeaking.value = false
     }
 
@@ -181,13 +214,17 @@ class KidsStoriesViewModel(application: Application) : AndroidViewModel(applicat
             val type = Types.newParameterizedType(List::class.java, QuizQuestion::class.java)
             val adapter = RetrofitClient.moshiParser.adapter<List<QuizQuestion>>(type)
             adapter.fromJson(story.quizJson) ?: emptyList()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             emptyList()
         }
     }
 
     override fun onCleared() {
         super.onCleared()
-        tts?.shutdown()
+        try {
+            tts?.shutdown()
+        } catch (t: Throwable) {
+            t.printStackTrace()
+        }
     }
 }
