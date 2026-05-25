@@ -1,0 +1,6 @@
+{
+  "name": "قصص الأطفال الذكية",
+  "description": "تطبيق يقوم بإنشاء قصص سردية تعليمية ذكية للأطفال تجمع بين الترفيه والفائدة مع اختبارات ذكاء تفاعلية.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
