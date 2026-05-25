@@ -35,6 +35,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
@@ -611,7 +613,7 @@ fun OptionSelectorGrid(
                             text = if (isRtl) option.labelAr else option.labelEn,
                             fontSize = 13.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = DarkCocoa
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -715,7 +717,6 @@ fun StoryReaderView(
     onBack: () -> Unit
 ) {
     val isAr = story.language == "ar"
-    val isSpeaking by viewModel.isSpeaking.collectAsState()
 
     val quizQuestions = remember(story) { viewModel.getQuizQuestionsForSelectedStory() }
     val quizAnswers by viewModel.quizAnswers.collectAsState()
@@ -736,7 +737,6 @@ fun StoryReaderView(
             ) {
                 IconButton(
                     onClick = {
-                        viewModel.stopSpeaking()
                         onBack()
                     },
                     modifier = Modifier
@@ -760,27 +760,10 @@ fun StoryReaderView(
                     )
                 )
 
-                // TTS Audio speaker narration toggle
-                IconButton(
-                    onClick = {
-                        viewModel.speakText(
-                            text = "${story.title}. \n ${story.storyContent}. \n ${story.moral}",
-                            languageCode = story.language
-                        )
-                    },
-                    modifier = Modifier
-                        .size(44.dp)
-                        .background(if (isSpeaking) SunnyGold else Color.White, CircleShape)
-                        .shadow(2.dp, CircleShape)
-                        .testTag("tts_toggle_button")
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(text = if (isSpeaking) "🔊" else "🔈", fontSize = 18.sp)
-                    }
-                }
+                // Empty balancing box to keep the title perfectly centered
+                Box(
+                    modifier = Modifier.size(44.dp)
+                )
             }
 
             LazyColumn(

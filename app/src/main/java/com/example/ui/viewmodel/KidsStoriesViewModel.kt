@@ -1,9 +1,6 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
-import android.os.Bundle
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.api.QuizQuestion
@@ -18,7 +15,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 sealed interface GenerationState {
     object Idle : GenerationState
@@ -52,30 +48,17 @@ class KidsStoriesViewModel(application: Application) : AndroidViewModel(applicat
     private val _quizCompleted = MutableStateFlow(false)
     val quizCompleted: StateFlow<Boolean> = _quizCompleted.asStateFlow()
 
-    // TTS management
-    private var tts: TextToSpeech? = null
-    private val _isSpeaking = MutableStateFlow(false)
-    val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
-
-    init {
-        // Do not initialize TextToSpeech immediately at startup.
-        // Lazy initialization when user requests voice over speaks protects the application
-        // from immediate startup crashes when TTS is broken or not supported in emulator/system environments.
-    }
-
     fun selectStory(story: StoryEntity?) {
         _selectedStory.value = story
         // Reset quiz for this story
         _quizAnswers.value = emptyMap()
         _quizCompleted.value = false
-        stopSpeaking()
     }
 
     fun deleteStory(id: Int) {
         viewModelScope.launch {
             if (_selectedStory.value?.id == id) {
                 _selectedStory.value = null
-                stopSpeaking()
             }
             repository.deleteStoryById(id)
         }
@@ -132,82 +115,6 @@ class KidsStoriesViewModel(application: Application) : AndroidViewModel(applicat
         _generationState.value = GenerationState.Idle
     }
 
-    // TTS Functions
-    fun speakText(text: String, languageCode: String) {
-        try {
-            val currentTts = tts
-            if (currentTts != null) {
-                val alreadySpeaking = try { currentTts.isSpeaking } catch (t: Throwable) { false }
-                if (alreadySpeaking) {
-                    try { currentTts.stop() } catch (t: Throwable) {}
-                    _isSpeaking.value = false
-                    return
-                }
-                performSpeak(text, languageCode)
-            } else {
-                // Initialize TTS lazily
-                _isSpeaking.value = true
-                tts = TextToSpeech(getApplication()) { status ->
-                    if (status == TextToSpeech.SUCCESS) {
-                        performSpeak(text, languageCode)
-                    } else {
-                        _isSpeaking.value = false
-                        tts = null
-                    }
-                }
-            }
-        } catch (t: Throwable) {
-            t.printStackTrace()
-            _isSpeaking.value = false
-            tts = null
-        }
-    }
-
-    private fun performSpeak(text: String, languageCode: String) {
-        val ttsInstance = tts ?: return
-        try {
-            val locale = if (languageCode == "ar") Locale("ar") else Locale.US
-            try {
-                ttsInstance.language = locale
-            } catch (t: Throwable) {
-                t.printStackTrace()
-            }
-            
-            _isSpeaking.value = true
-            ttsInstance.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
-                override fun onDone(utteranceId: String?) {
-                    _isSpeaking.value = false
-                }
-                @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) {
-                    _isSpeaking.value = false
-                }
-            })
-            val params = Bundle().apply {
-                putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "StorySpeechId")
-            }
-            // Clean text from bold markers or formatting before reading out loud
-            val cleanText = text.replace("**", "").replace("_", "")
-            val result = ttsInstance.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, "StorySpeechId")
-            if (result == TextToSpeech.ERROR) {
-                _isSpeaking.value = false
-            }
-        } catch (t: Throwable) {
-            t.printStackTrace()
-            _isSpeaking.value = false
-        }
-    }
-
-    fun stopSpeaking() {
-        try {
-            tts?.stop()
-        } catch (t: Throwable) {
-            t.printStackTrace()
-        }
-        _isSpeaking.value = false
-    }
-
     fun getQuizQuestionsForSelectedStory(): List<QuizQuestion> {
         val story = _selectedStory.value ?: return emptyList()
         return try {
@@ -216,15 +123,6 @@ class KidsStoriesViewModel(application: Application) : AndroidViewModel(applicat
             adapter.fromJson(story.quizJson) ?: emptyList()
         } catch (e: Throwable) {
             emptyList()
-        }
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        try {
-            tts?.shutdown()
-        } catch (t: Throwable) {
-            t.printStackTrace()
         }
     }
 }

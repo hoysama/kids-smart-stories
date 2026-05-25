@@ -8,6 +8,8 @@ import com.example.data.api.Part
 import com.example.data.api.RetrofitClient
 import com.example.data.local.StoryDao
 import com.example.data.local.StoryEntity
+import com.example.data.api.QuizQuestion
+import com.squareup.moshi.Types
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -98,6 +100,9 @@ class StoryRepository(private val storyDao: StoryDao) {
         val storyResponse = adapter.fromJson(responseText)
             ?: throw Exception("Failed to serialize story format. Raw output was: $responseText")
 
+        val quizType = Types.newParameterizedType(List::class.java, QuizQuestion::class.java)
+        val quizJsonString = RetrofitClient.moshiParser.adapter<List<QuizQuestion>>(quizType).toJson(storyResponse.quiz)
+
         // Save into Room database
         val entity = StoryEntity(
             title = storyResponse.title,
@@ -108,7 +113,7 @@ class StoryRepository(private val storyDao: StoryDao) {
             tone = tone,
             storyContent = storyResponse.storyContent,
             moral = storyResponse.moral,
-            quizJson = RetrofitClient.moshiParser.adapter(Any::class.java).toJson(storyResponse.quiz),
+            quizJson = quizJsonString,
             language = language
         )
 
